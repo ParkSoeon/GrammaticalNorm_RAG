@@ -146,7 +146,7 @@ for line in paragraphs:
                 e.strip() for e in ex_line[2:].split(",") if e.strip()
             ]
         else:
-            if should_split_by_comma(ex_line):
+            if split_by_comma(ex_line):
                 ex_list = [e.strip() for e in ex_line.split(",") if e.strip()]
             else:
                 ex_list = [ex_line]
