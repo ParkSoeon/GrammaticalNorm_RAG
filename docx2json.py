@@ -2,8 +2,26 @@ from docx import Document
 import json
 import re
 
-# 문서 로드
+# Set the Path
 doc_path = "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/국어 지식 기반 생성(RAG) 참조 문서.docx"
+output_path = (
+    "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/GrammarBook_structured.json"
+)
+
+
+# Set the function to determine if a text should be split by commas
+def should_split_by_comma(text):
+    if any(
+        p in text
+        for p in [".", "!", "?", "다", "요", "함", "함.", "한다", "있다", "없다"]
+    ):
+        return False
+    if "/" in text:
+        return False
+    return text.count(",") >= 3
+
+
+# Load the DOCX file
 document = Document(doc_path)
 paragraphs = [p.text.strip() for p in document.paragraphs if p.text.strip()]
 
@@ -14,13 +32,13 @@ current_subrule = None
 current_exception = None
 notes = []
 in_note = False
+prev_line = ""
 
-# 규범 제목 감지 정규표현식
 title_pattern = re.compile(r"^<(.+?)\s*-\s*(.+?)(\s*(제.*항|표.*|규정)?)>$")
 
 for line in paragraphs:
+    # Rule title
     if line.startswith("<") and line.endswith(">"):
-        # entry 저장
         if entry:
             if current_subrule:
                 subrules.append(current_subrule)
@@ -50,9 +68,11 @@ for line in paragraphs:
             entry["rule_id"] = None
             entry["title"] = line.strip("<>")
 
-    elif re.match(r"^\(\d+\)", line):  # 소규칙 감지
+    # Subrule section
+    elif re.match(r"^\(\d+\)", line):
         if current_subrule:
             subrules.append(current_subrule)
+        current_exception = None
         current_subrule = {
             "index": re.match(r"^\((\d+)\)", line).group(0),
             "description": line.split(")", 1)[1].strip(),
@@ -60,44 +80,81 @@ for line in paragraphs:
             "exceptions": [],
         }
 
-    elif (
-        line.startswith("다만")
-        or line.startswith("[붙임]")
-        or line.startswith("※")
-        or "않는다." in line
-    ):
+    # Exceptions
+    elif re.match(r"^(다만|붙임|\[붙임\d*\]|※)", line):
         current_exception = {"description": line.strip(), "examples": []}
         if current_subrule:
             current_subrule["exceptions"].append(current_exception)
-
-    elif line.startswith("-"):
-        ex_line = line.lstrip("-").strip()
-        ex_list = [ex.strip() for ex in ex_line.split(",") if ex.strip()]
-
-        if ex_line.startswith(("ㄱ:", "ㄱ.")):
-            entry["correct_examples"] = [ex.strip() for ex in ex_line[2:].split(",")]
-        elif ex_line.startswith(("ㄴ:", "ㄴ.")):
-            entry["incorrect_examples"] = [ex.strip() for ex in ex_line[2:].split(",")]
-        elif current_exception:
-            current_exception["examples"].extend(ex_list)
-        elif current_subrule:
-            current_subrule["examples"].extend(ex_list)
         else:
-            entry.setdefault("examples", []).extend(ex_list)
+            entry.setdefault("exceptions", []).append(current_exception)
 
+    # Notes
     elif line.startswith("￭"):
         in_note = True
         notes.append({"title": line.replace("￭", "").strip(), "content": ""})
 
-    else:
-        if in_note and notes:
-            notes[-1]["content"] += line.strip()
-        elif "description" not in entry:
-            entry["description"] = line.strip()
-        else:
-            entry["description"] += " " + line.strip()
+    # Examples
+    elif line.startswith("-"):
+        ex_line = line.lstrip("-").strip()
 
-# 마지막 entry 저장
+        if ex_line.startswith(("ㄱ:", "ㄱ.")) and "ㄴ" in ex_line:
+            parts = re.split(r"ㄴ[:.]", ex_line)
+            g_examples = re.sub(r"^ㄱ[:.]", "", parts[0]).strip()
+            n_examples = parts[1].strip() if len(parts) > 1 else ""
+            entry["correct_examples"] = [
+                e.strip() for e in g_examples.split(",") if e.strip()
+            ]
+            entry["incorrect_examples"] = [
+                e.strip() for e in n_examples.split(",") if e.strip()
+            ]
+        elif ex_line.startswith(("ㄱ:", "ㄱ.")):
+            entry["correct_examples"] = [
+                e.strip() for e in ex_line[2:].split(",") if e.strip()
+            ]
+        elif ex_line.startswith(("ㄴ:", "ㄴ.")):
+            entry["incorrect_examples"] = [
+                e.strip() for e in ex_line[2:].split(",") if e.strip()
+            ]
+        else:
+            # ✅ 문장 또는 단어 리스트 판단
+            if should_split_by_comma(ex_line):
+                ex_list = [e.strip() for e in ex_line.split(",") if e.strip()]
+            else:
+                ex_list = [ex_line]
+
+            if current_exception:
+                current_exception["examples"].extend(ex_list)
+            elif current_subrule:
+                current_subrule["examples"].extend(ex_list)
+            else:
+                entry.setdefault("examples", []).extend(ex_list)
+
+    # Auto-examples after '한다:', '이다:'
+    elif prev_line.endswith(("한다:", "이다:")) and line.startswith("-"):
+        ex_line = line.lstrip("-").strip()
+        if should_split_by_comma(ex_line):
+            ex_list = [e.strip() for e in ex_line.split(",") if e.strip()]
+        else:
+            ex_list = [ex_line]
+
+        if current_subrule:
+            current_subrule["examples"].extend(ex_list)
+        else:
+            entry.setdefault("examples", []).extend(ex_list)
+
+    # Notes content
+    elif in_note and notes:
+        notes[-1]["content"] += " " + line.strip()
+
+    # General description
+    elif "description" not in entry:
+        entry["description"] = line.strip()
+    else:
+        entry["description"] += " " + line.strip()
+
+    prev_line = line
+
+# Save final entry
 if current_subrule:
     subrules.append(current_subrule)
 if subrules:
@@ -107,10 +164,7 @@ if notes:
 if entry:
     entries.append(entry)
 
-# JSON 저장
-output_path = (
-    "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/GrammarBook_structured.json"
-)
+# Write JSON
 with open(output_path, "w", encoding="utf-8") as f:
     json.dump(entries, f, ensure_ascii=False, indent=2)
 
