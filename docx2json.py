@@ -3,9 +3,9 @@ import json
 import re
 
 # Set the Path
-doc_path = "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/국어 지식 기반 생성(RAG) 참조 문서.docx"
+doc_path = "문서.docx"
 output_path = (
-    "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/GrammarBook_structured.json"
+    "structured.json"
 )
 
 
@@ -116,7 +116,7 @@ for line in paragraphs:
                 e.strip() for e in ex_line[2:].split(",") if e.strip()
             ]
         else:
-            # ✅ 문장 또는 단어 리스트 판단
+            # Handle examples in exceptions or subrules
             if should_split_by_comma(ex_line):
                 ex_list = [e.strip() for e in ex_line.split(",") if e.strip()]
             else:
@@ -129,8 +129,8 @@ for line in paragraphs:
             else:
                 entry.setdefault("examples", []).extend(ex_list)
 
-    # Auto-examples after '한다:', '이다:'
-    elif prev_line.endswith(("한다:", "이다:")) and line.startswith("-"):
+    # Auto-examples after '한다:'
+    elif prev_line.endswith("한다:") and line.startswith("-"):
         ex_line = line.lstrip("-").strip()
         if should_split_by_comma(ex_line):
             ex_list = [e.strip() for e in ex_line.split(",") if e.strip()]
