@@ -2,26 +2,40 @@ from docx import Document
 import json
 import re
 
-# Load the document
-document = Document(
-    "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/국어 지식 기반 생성(RAG) 참조 문서.docx"
-)
+# 문서 로드
+doc_path = "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/국어 지식 기반 생성(RAG) 참조 문서.docx"
+document = Document(doc_path)
 paragraphs = [p.text.strip() for p in document.paragraphs if p.text.strip()]
 
 entries = []
 entry = {}
-current_example_group = None  # 그룹 예시 구분용
+subrules = []
+current_subrule = None
+current_exception = None
+notes = []
+in_note = False
 
-# 유연한 규범 제목 패턴
+# 규범 제목 감지 정규표현식
 title_pattern = re.compile(r"^<(.+?)\s*-\s*(.+?)(\s*(제.*항|표.*|규정)?)>$")
 
 for line in paragraphs:
-    # 규범 제목 감지
     if line.startswith("<") and line.endswith(">"):
+        # entry 저장
         if entry:
+            if current_subrule:
+                subrules.append(current_subrule)
+                current_subrule = None
+            if subrules:
+                entry["subrules"] = subrules
+                subrules = []
+            if notes:
+                entry["notes"] = notes
+                notes = []
             entries.append(entry)
             entry = {}
-        current_example_group = None
+
+        current_exception = None
+        in_note = False
 
         match = title_pattern.match(line)
         if match:
@@ -29,50 +43,76 @@ for line in paragraphs:
             entry["source"] = match.group(2).strip()
             rule_id = match.group(3).strip()
             entry["rule_id"] = rule_id if rule_id else None
+            entry["title"] = match.group(2).strip() + " " + (rule_id if rule_id else "")
         else:
             entry["category"] = "기타"
             entry["source"] = "미지정"
             entry["rule_id"] = None
+            entry["title"] = line.strip("<>")
 
-    # 예시 그룹 제목 감지
-    elif re.match(r"^\d+\.\s*['‘\"]?(.*?)['’\"]?\s*의 경우", line):
-        group_title = (
-            re.match(r"^\d+\.\s*['‘\"]?(.*?)['’\"]?\s*의 경우", line).group(1).strip()
-        )
-        current_example_group = group_title
-        entry.setdefault("examples_grouped", {})[current_example_group] = []
+    elif re.match(r"^\(\d+\)", line):  # 소규칙 감지
+        if current_subrule:
+            subrules.append(current_subrule)
+        current_subrule = {
+            "index": re.match(r"^\((\d+)\)", line).group(0),
+            "description": line.split(")", 1)[1].strip(),
+            "examples": [],
+            "exceptions": [],
+        }
 
-    # 예시 라인
+    elif (
+        line.startswith("다만")
+        or line.startswith("[붙임]")
+        or line.startswith("※")
+        or "않는다." in line
+    ):
+        current_exception = {"description": line.strip(), "examples": []}
+        if current_subrule:
+            current_subrule["exceptions"].append(current_exception)
+
     elif line.startswith("-"):
         ex_line = line.lstrip("-").strip()
+        ex_list = [ex.strip() for ex in ex_line.split(",") if ex.strip()]
+
         if ex_line.startswith(("ㄱ:", "ㄱ.")):
             entry["correct_examples"] = [ex.strip() for ex in ex_line[2:].split(",")]
         elif ex_line.startswith(("ㄴ:", "ㄴ.")):
             entry["incorrect_examples"] = [ex.strip() for ex in ex_line[2:].split(",")]
-        elif current_example_group:
-            entry["examples_grouped"][current_example_group].extend(
-                [ex.strip() for ex in ex_line.split(",")]
-            )
+        elif current_exception:
+            current_exception["examples"].extend(ex_list)
+        elif current_subrule:
+            current_subrule["examples"].extend(ex_list)
         else:
-            entry.setdefault("examples", []).extend(
-                [ex.strip() for ex in ex_line.split(",")]
-            )
+            entry.setdefault("examples", []).extend(ex_list)
 
-    # 설명 텍스트
+    elif line.startswith("￭"):
+        in_note = True
+        notes.append({"title": line.replace("￭", "").strip(), "content": ""})
+
     else:
-        if "description" not in entry:
+        if in_note and notes:
+            notes[-1]["content"] += line.strip()
+        elif "description" not in entry:
             entry["description"] = line.strip()
         else:
-            entry["description"] += " " + line.strip()  # 멀티라인 설명 처리
+            entry["description"] += " " + line.strip()
 
-# 마지막 entry 추가
+# 마지막 entry 저장
+if current_subrule:
+    subrules.append(current_subrule)
+if subrules:
+    entry["subrules"] = subrules
+if notes:
+    entry["notes"] = notes
 if entry:
     entries.append(entry)
 
 # JSON 저장
-output_path = "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/GrammarBook.json"
-with open(output_path, "w", encoding="utf-8") as file:
-    json.dump(entries, file, ensure_ascii=False, indent=4)
+output_path = (
+    "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/GrammarBook_structured.json"
+)
+with open(output_path, "w", encoding="utf-8") as f:
+    json.dump(entries, f, ensure_ascii=False, indent=2)
 
 print(f"JSON file has been created at: {output_path}")
-print(f"Total rules parsed: {len(entries)}")
+print(f"Total entries parsed: {len(entries)}")
