@@ -3,9 +3,9 @@ import json
 import re
 
 # Set the Path
-doc_path = "문서.docx"
+doc_path = "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/국어 지식 기반 생성(RAG) 참조 문서.docx"
 output_path = (
-    "structured.json"
+    "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/GrammarBook_structured.json"
 )
 
 
