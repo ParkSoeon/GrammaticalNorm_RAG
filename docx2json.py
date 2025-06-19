@@ -3,14 +3,14 @@ import json
 import re
 
 # Set the Path
-doc_path = "문서.docx"
+doc_path = "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/국어 지식 기반 생성(RAG) 참조 문서.docx"
 output_path = (
-    "structured.json"
+    "/Users/soeon/Desktop/GCU/25/ISNLP/2025말평/Dataset/GrammarBook_structured.json"
 )
 
 
-# Helper: split by comma only if it's safe
-def should_split_by_comma(text):
+# Function to check if a line should be split by comma
+def split_by_comma(text):
     if any(
         p in text
         for p in [".", "!", "?", "다", "요", "함", "함.", "한다", "있다", "없다"]
@@ -21,31 +21,32 @@ def should_split_by_comma(text):
     return text.count(",") >= 3
 
 
-# Load document
+# Load Document
 document = Document(doc_path)
 paragraphs = [p.text.strip() for p in document.paragraphs if p.text.strip()]
 
-entries = []
-entry = {}
-subrules = []
-current_subrule = None
-current_exception = None
-notes = []
-in_note = False
-prev_line = ""
-in_auto_example = False
+# Initialize variables
+entries = []  # List to hold all Entries(Primary Rules)
+entry = {}  # Current Entry being processed
+subrules = []  # List to hold Subrules
+current_subrule = None  # Current Subrule being processed
+current_exception = None  # Current Exception being processed
+notes = []  # List to hold Notes
+in_note = False  # Flag to indicate if we are in a note
+prev_line = ""  # Previous line for context
+in_auto_example = False  # Flag for auto-example mode
 
 title_pattern = re.compile(r"^<(.+?)\s*-\s*(.+?)(\s*(제.*항|표.*|규정)?)>$")
 
 for line in paragraphs:
 
-    # Auto-example trigger line
+    # For Multi(Tens of lines) Auto-example trigger line
     if line.endswith("한다:"):
         prev_line = line
         in_auto_example = True
         continue
 
-    # Auto-example mode: handle lines after '한다:'
+    # Auto-example Mode: Handle Lines after '한다:'(which has specific case)
     if in_auto_example:
         if line == "" or line.startswith("<") or re.match(r"^\(\d+\)", line):
             in_auto_example = False
@@ -58,7 +59,7 @@ for line in paragraphs:
                     entry.setdefault("examples", []).append(ex_line)
             continue
 
-    # Rule title
+    # Rule for Title
     if line.startswith("<") and line.endswith(">"):
         if entry:
             if current_subrule:
@@ -78,18 +79,23 @@ for line in paragraphs:
 
         match = title_pattern.match(line)
         if match:
-            entry["category"] = match.group(1).strip()
-            entry["source"] = match.group(2).strip()
-            rule_id = match.group(3).strip()
-            entry["rule_id"] = rule_id if rule_id else None
-            entry["title"] = match.group(2).strip() + " " + (rule_id if rule_id else "")
-        else:
-            entry["category"] = "기타"
-            entry["source"] = "미지정"
-            entry["rule_id"] = None
-            entry["title"] = line.strip("<>")
+            entry["category"] = match.group(1).strip()  # (1) Category of the rule
+            entry["source"] = match.group(2).strip()  # (2) Source of the rule
 
-    # Subrule section
+            rule_id = match.group(3).strip()
+            entry["rule_id"] = rule_id if rule_id else None  # (3) Rule ID if exists
+
+            entry["title"] = (
+                match.group(2).strip() + " " + (rule_id if rule_id else "")
+            )  # (4) Title of the rule
+
+        else:  # Exceptional case
+            entry["category"] = "기타"  # (1) Category of the rule
+            entry["source"] = "미지정"  # (2) Source of the rule
+            entry["rule_id"] = None  # (3) Rule ID if exists
+            entry["title"] = line.strip("<>")  # (4) Title of the rule
+
+    # Subrule Section
     elif re.match(r"^\(\d+\)", line):
         if current_subrule:
             subrules.append(current_subrule)
@@ -101,7 +107,8 @@ for line in paragraphs:
             "exceptions": [],
         }
 
-    # Exception section
+    # Exception Section
+    # '다만', '붙임', '[붙임\d*]', '※' are used to denote exceptions
     elif re.match(r"^(다만|붙임|\[붙임\d*\]|※)", line):
         current_exception = {"description": line.strip(), "examples": []}
         if current_subrule:
@@ -109,12 +116,14 @@ for line in paragraphs:
         else:
             entry.setdefault("exceptions", []).append(current_exception)
 
-    # Notes
+    # Note Section
     elif line.startswith("￭") or line.startswith("*"):
         in_note = True
-        notes.append({"title": line.lstrip("￭*").strip(), "content": ""})
+        note_text = line.strip("￭*").strip()
+        if note_text:
+            notes.append({"title": {note_text}, "content": ""})
 
-    # Examples with hyphen
+    # Example with Hyphen
     elif line.startswith("-"):
         ex_line = line.lstrip("-").strip()
 
@@ -149,11 +158,11 @@ for line in paragraphs:
             else:
                 entry.setdefault("examples", []).extend(ex_list)
 
-    # Notes content
+    # Notes Content
     elif in_note and notes:
         notes[-1]["content"] += " " + line.strip()
 
-    # General description
+    # General Description
     elif "description" not in entry:
         entry["description"] = line.strip()
     else:
@@ -161,7 +170,7 @@ for line in paragraphs:
 
     prev_line = line
 
-# Save last entry
+# Save last entry if exists
 if current_subrule:
     subrules.append(current_subrule)
 if subrules:
@@ -171,7 +180,7 @@ if notes:
 if entry:
     entries.append(entry)
 
-# Output JSON
+# Write to JSON file
 with open(output_path, "w", encoding="utf-8") as f:
     json.dump(entries, f, ensure_ascii=False, indent=2)
 
