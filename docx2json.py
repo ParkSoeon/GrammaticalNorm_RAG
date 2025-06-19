@@ -9,7 +9,7 @@ output_path = (
 )
 
 
-# Set the function to determine if a text should be split by commas
+# Helper: split by comma only if it's safe
 def should_split_by_comma(text):
     if any(
         p in text
@@ -21,7 +21,7 @@ def should_split_by_comma(text):
     return text.count(",") >= 3
 
 
-# Load the DOCX file
+# Load document
 document = Document(doc_path)
 paragraphs = [p.text.strip() for p in document.paragraphs if p.text.strip()]
 
@@ -33,10 +33,31 @@ current_exception = None
 notes = []
 in_note = False
 prev_line = ""
+in_auto_example = False
 
 title_pattern = re.compile(r"^<(.+?)\s*-\s*(.+?)(\s*(제.*항|표.*|규정)?)>$")
 
 for line in paragraphs:
+
+    # Auto-example trigger line
+    if line.endswith("한다:"):
+        prev_line = line
+        in_auto_example = True
+        continue
+
+    # Auto-example mode: handle lines after '한다:'
+    if in_auto_example:
+        if line == "" or line.startswith("<") or re.match(r"^\(\d+\)", line):
+            in_auto_example = False
+        else:
+            ex_line = line.strip()
+            if ex_line:
+                if current_subrule:
+                    current_subrule["examples"].append(ex_line)
+                else:
+                    entry.setdefault("examples", []).append(ex_line)
+            continue
+
     # Rule title
     if line.startswith("<") and line.endswith(">"):
         if entry:
@@ -80,7 +101,7 @@ for line in paragraphs:
             "exceptions": [],
         }
 
-    # Exceptions
+    # Exception section
     elif re.match(r"^(다만|붙임|\[붙임\d*\]|※)", line):
         current_exception = {"description": line.strip(), "examples": []}
         if current_subrule:
@@ -89,11 +110,11 @@ for line in paragraphs:
             entry.setdefault("exceptions", []).append(current_exception)
 
     # Notes
-    elif line.startswith("￭"):
+    elif line.startswith("￭") or line.startswith("*"):
         in_note = True
-        notes.append({"title": line.replace("￭", "").strip(), "content": ""})
+        notes.append({"title": line.lstrip("￭*").strip(), "content": ""})
 
-    # Examples
+    # Examples with hyphen
     elif line.startswith("-"):
         ex_line = line.lstrip("-").strip()
 
@@ -116,7 +137,6 @@ for line in paragraphs:
                 e.strip() for e in ex_line[2:].split(",") if e.strip()
             ]
         else:
-            # Handle examples in exceptions or subrules
             if should_split_by_comma(ex_line):
                 ex_list = [e.strip() for e in ex_line.split(",") if e.strip()]
             else:
@@ -128,19 +148,6 @@ for line in paragraphs:
                 current_subrule["examples"].extend(ex_list)
             else:
                 entry.setdefault("examples", []).extend(ex_list)
-
-    # Auto-examples after '한다:'
-    elif prev_line.endswith("한다:") and line.startswith("-"):
-        ex_line = line.lstrip("-").strip()
-        if should_split_by_comma(ex_line):
-            ex_list = [e.strip() for e in ex_line.split(",") if e.strip()]
-        else:
-            ex_list = [ex_line]
-
-        if current_subrule:
-            current_subrule["examples"].extend(ex_list)
-        else:
-            entry.setdefault("examples", []).extend(ex_list)
 
     # Notes content
     elif in_note and notes:
@@ -154,7 +161,7 @@ for line in paragraphs:
 
     prev_line = line
 
-# Save final entry
+# Save last entry
 if current_subrule:
     subrules.append(current_subrule)
 if subrules:
@@ -164,7 +171,7 @@ if notes:
 if entry:
     entries.append(entry)
 
-# Write JSON
+# Output JSON
 with open(output_path, "w", encoding="utf-8") as f:
     json.dump(entries, f, ensure_ascii=False, indent=2)
 
